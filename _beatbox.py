@@ -20,6 +20,8 @@ from xml.sax.xmlreader import AttributesNSImpl
 
 # global constants for namespace strings, used during serialization
 _partnerNs = "urn:enterprise.soap.sforce.com"
+
+#_partnerNs = "http://soap.sforce.com/schemas/class/EntitlementAPI"
 _sobjectNs = "urn:sobject.enterprise.soap.sforce.com"
 _envNs = "http://schemas.xmlsoap.org/soap/envelope/"
 _noAttrs = AttributesNSImpl({}, {})
@@ -34,7 +36,7 @@ _tSObjectNS = xmltramp.Namespace(_sobjectNs)
 _tSoapNS = xmltramp.Namespace(_envNs)
 
 # global config
-gzipRequest=True    # are we going to gzip the request ?
+gzipRequest=False    # are we going to gzip the request ?
 gzipResponse=True   # are we going to tell teh server to gzip the response ?
 forceHttp=False     # force all connections to be HTTP, for debugging
 
@@ -142,6 +144,10 @@ class BeatBoxXmlGenerator(XMLGenerator):
             #if the name was not namespace-scoped, use the qualified part
             return name[1]
         # else try to restore the original prefix from the namespace
+        print 'current context: '
+        print self._current_context
+        print 'name[0] ' + name[0]
+        print 'name[1] ' + name[1]
         return self._current_context[name[0]] + ":" + name[1]
         
     def startElementNS(self, name, qname, attrs):
@@ -253,10 +259,11 @@ class SoapWriter(XmlWriter):
 
 # processing for a single soap request / response       
 class SoapEnvelope:
-    def __init__(self, serverUrl, operationName, clientId="BeatBox/" + __version__):
+    def __init__(self, namespace, serverUrl, operationName, clientId="BeatBox/" + __version__):
         self.serverUrl = serverUrl
         self.operationName = operationName
         self.clientId = clientId
+        self.namespace = namespace
 
     def writeHeaders(self, writer):
         pass
@@ -268,15 +275,15 @@ class SoapEnvelope:
         s = SoapWriter()
         s.startElement(_envNs, "Header")
         s.characters("\n")
-        s.startElement(_partnerNs, "CallOptions")
-        s.writeStringElement(_partnerNs, "client", self.clientId)
+        s.startElement(self.namespace, "CallOptions")
+        s.writeStringElement(self.namespace, "client", self.clientId)
         s.endElement()
         s.characters("\n")
         self.writeHeaders(s)
         s.endElement()  # Header
         s.startElement(_envNs, "Body")
         s.characters("\n")
-        s.startElement(_partnerNs, self.operationName)
+        s.startElement(self.namespace, self.operationName)
         self.writeBody(s)
         s.endElement()  # operation
         s.endElement()  # body
@@ -310,6 +317,8 @@ class SoapEnvelope:
                     conn = makeConnection(scheme, host)
                     close = True
                 print 'connection made ----------'
+                print 'sent payload ---------'
+                print self.makeEnvelope()
                 conn.request("POST", path, self.makeEnvelope(), headers)
                 response = conn.getresponse()
                 rawResponse = response.read()
@@ -348,39 +357,65 @@ class SoapEnvelope:
     
 
 class LoginRequest(SoapEnvelope):
-    def __init__(self, serverUrl, username, password):
-        SoapEnvelope.__init__(self, serverUrl, "login")
+    def __init__(self, namespace, serverUrl, username, password):
+        SoapEnvelope.__init__(self, namespace, serverUrl, "login")
         self.__username = username
         self.__password = password
+        self.namespace = namespace
 
     def writeBody(self, s):
-        s.writeStringElement(_partnerNs, "username", self.__username)
-        s.writeStringElement(_partnerNs, "password", self.__password)
+        s.writeStringElement(self.namespace, "username", self.__username)
+        s.writeStringElement(self.namespace, "password", self.__password)
 
 
 # base class for all methods that require a sessionId
 class AuthenticatedRequest(SoapEnvelope):
-    def __init__(self, serverUrl, sessionId, operationName):
-        SoapEnvelope.__init__(self, serverUrl, operationName)
-        self.sessionId = sessionId
+  def __init__(self, serverUrl, sessionId, operationName):
+    SoapEnvelope.__init__(self, serverUrl, operationName)
+    self.sessionId = sessionId
 
-    def writeHeaders(self, s):
-        s.startElement(_partnerNs, "SessionHeader")
-        s.writeStringElement(_partnerNs, "sessionId", self.sessionId)
-        s.endElement()
+  def writeHeaders(self, s):
+    s.startElement(_partnerNs, "SessionHeader")
+    s.writeStringElement(_partnerNs, "sessionId", self.sessionId)
+    s.endElement()
 
-    def writeSObjects(self, s, sObjects, elemName="sObjects"):
-        if islst(sObjects):
-            for o in sObjects:
-                self.writeSObjects(s, o, elemName)
-        else:
-            s.startElement(_partnerNs, elemName)
-            # type has to go first
-            s.writeStringElement(_sobjectNs, "type", sObjects['type'])
-            for fn in sObjects.keys():
-                if (fn != 'type'):
-                    s.writeStringElement(_sobjectNs, fn, sObjects[fn])
-            s.endElement()
+  def writeSObjects(self, s, sObjects, elemName="sObjects"):
+    if islst(sObjects):
+      for o in sObjects:
+        self.writeSObjects(s, o, elemName)
+    else:
+      s.startElement(_partnerNs, elemName)
+      # type has to go first
+      s.writeStringElement(_sobjectNs, "type", sObjects['type'])
+      for fn in sObjects.keys():
+        if (fn != 'type'):
+          s.writeStringElement(_sobjectNs, fn, sObjects[fn])
+      s.endElement()
+
+# base class for all methods that require a sessionId
+class AuthenticatedRequest_v2(SoapEnvelope):
+  def __init__(self, namespace, serverUrl, sessionId, operationName):
+    SoapEnvelope.__init__(self, namespace, serverUrl, operationName)
+    self.sessionId = sessionId
+    self.namespace = namespace
+
+  def writeHeaders(self, s):
+    s.startElement(self.namespace, "SessionHeader")
+    s.writeStringElement(self.namespace, "sessionId", self.sessionId)
+    s.endElement()
+
+  def writeSObjects(self, s, sObjects, elemName="sObjects"):
+    if islst(sObjects):
+      for o in sObjects:
+        self.writeSObjects(s, o, elemName)
+    else:
+      s.startElement(self.namespace, elemName)
+      # type has to go first
+      s.writeStringElement(_sobjectNs, "type", sObjects['type'])
+      for fn in sObjects.keys():
+        if (fn != 'type'):
+          s.writeStringElement(_sobjectNs, fn, sObjects[fn])
+      s.endElement()
         
                         
 class QueryOptionsRequest(AuthenticatedRequest):
